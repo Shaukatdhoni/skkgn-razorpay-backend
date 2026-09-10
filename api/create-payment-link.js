@@ -177,6 +177,12 @@ module.exports = async (req, res) => {
           accept_partial: false,
           reference_id: referenceId,
           description: p.description,
+
+          customer: {
+            name: String(name),
+            contact: String(mobile)
+          },
+
           notes: notes,
 
           callback_url:
