@@ -16,7 +16,11 @@ const PLANS = {
 };
 
 function encrypt(text, secret) {
-  const key = crypto.createHash("sha256").update(secret).digest();
+  const key = crypto
+    .createHash("sha256")
+    .update(secret)
+    .digest();
+
   const iv = crypto.randomBytes(12);
 
   const cipher = crypto.createCipheriv(
@@ -183,7 +187,7 @@ module.exports = async (req, res) => {
               notes,
 
             callback_url:
-              "https://YOUR-VERCEL-DOMAIN.vercel.app/api/payment-callback",
+              "https://skkgn-razorpay-backend.vercel.app/api/payment-callback",
 
             callback_method:
               "get",
