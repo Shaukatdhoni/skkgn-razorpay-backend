@@ -1,6 +1,10 @@
 const crypto = require("crypto");
 
 const PLANS = {
+  Test: {
+    amount: 100,
+    description: "SK KGN TEAM Test Payment - Registration Flow"
+  },
   Basic: {
     amount: 9900,
     description: "Basic Service Professional Complaint Draft"
