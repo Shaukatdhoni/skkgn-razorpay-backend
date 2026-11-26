@@ -191,7 +191,9 @@ module.exports = async (req, res) => {
           notes: notes,
 
           callback_url:
-            "https://skkgn-razorpay-backend.vercel.app/api/payment-callback",
+  returnTo === "store"
+    ? "https://skkgn-razorpay-backend.vercel.app/api/payment-callback?returnTo=store"
+    : "https://skkgn-razorpay-backend.vercel.app/api/payment-callback",
 
           callback_method: "get",
           reminder_enable: false
