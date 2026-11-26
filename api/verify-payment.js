@@ -1,10 +1,20 @@
+
 const crypto = require("crypto");
 
-function setCors(res) {
-  res.setHeader(
-    "Access-Control-Allow-Origin",
-    "https://skkgnteam.in"
-  );
+function setCors(req, res) {
+  const allowedOrigins = [
+    "https://skkgnteam.in",
+    "https://www.skkgnteam.in"
+  ];
+
+  const origin = req.headers.origin;
+
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader(
+      "Access-Control-Allow-Origin",
+      origin
+    );
+  }
 
   res.setHeader(
     "Access-Control-Allow-Methods",
@@ -47,6 +57,10 @@ function decrypt(text, secret) {
   const [ivB64, tagB64, encB64] =
     text.split(".");
 
+  if (!ivB64 || !tagB64 || !encB64) {
+    throw new Error("Invalid encrypted complaint data");
+  }
+
   const decipher = crypto.createDecipheriv(
     "aes-256-gcm",
     key,
@@ -66,42 +80,30 @@ function decrypt(text, secret) {
 }
 
 module.exports = async (req, res) => {
-
-  setCors(res);
+  setCors(req, res);
 
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
 
   if (req.method !== "GET") {
-    return res
-      .status(405)
-      .json({
-        error: "Method not allowed"
-      });
+    return res.status(405).json({
+      error: "Method not allowed"
+    });
   }
 
   try {
-
-    const token =
-      String(req.query.token || "");
-
-    const dot =
-      token.lastIndexOf(".");
+    const token = String(req.query.token || "");
+    const dot = token.lastIndexOf(".");
 
     if (dot < 1) {
-      return res
-        .status(400)
-        .json({
-          error: "Invalid token"
-        });
+      return res.status(400).json({
+        error: "Invalid token"
+      });
     }
 
-    const payload =
-      token.slice(0, dot);
-
-    const signature =
-      token.slice(dot + 1);
+    const payload = token.slice(0, dot);
+    const signature = token.slice(dot + 1);
 
     const tokenSecret =
       process.env.CALLBACK_TOKEN_SECRET;
@@ -121,12 +123,9 @@ module.exports = async (req, res) => {
       !keyId ||
       !keySecret
     ) {
-      return res
-        .status(500)
-        .json({
-          error:
-            "Server secrets are missing"
-        });
+      return res.status(500).json({
+        error: "Server secrets are missing"
+      });
     }
 
     if (
@@ -135,136 +134,100 @@ module.exports = async (req, res) => {
         signature
       )
     ) {
-      return res
-        .status(401)
-        .json({
-          error:
-            "Invalid verification token"
-        });
+      return res.status(401).json({
+        error: "Invalid verification token"
+      });
     }
 
-    const info =
-      JSON.parse(
-        Buffer
-          .from(
-            payload,
-            "base64url"
-          )
-          .toString("utf8")
-      );
+    const info = JSON.parse(
+      Buffer.from(payload, "base64url")
+        .toString("utf8")
+    );
 
     if (
       !info.exp ||
       Date.now() > info.exp
     ) {
-      return res
-        .status(401)
-        .json({
-          error:
-            "Verification token expired"
-        });
+      return res.status(401).json({
+        error: "Verification token expired"
+      });
     }
 
-    const auth =
-      Buffer
-        .from(
-          `${keyId}:${keySecret}`
-        )
-        .toString("base64");
+    if (
+      !info.link_id ||
+      !info.reference_id
+    ) {
+      return res.status(400).json({
+        error: "Invalid payment details"
+      });
+    }
 
-    const razorpayResponse =
-      await fetch(
-        `https://api.razorpay.com/v1/payment_links/${encodeURIComponent(info.link_id)}`,
-        {
-          headers: {
-            "Authorization":
-              `Basic ${auth}`
-          }
+    const auth = Buffer.from(
+      `${keyId}:${keySecret}`
+    ).toString("base64");
+
+    const razorpayResponse = await fetch(
+      `https://api.razorpay.com/v1/payment_links/${encodeURIComponent(info.link_id)}`,
+      {
+        headers: {
+          Authorization: `Basic ${auth}`
         }
-      );
+      }
+    );
 
-    const link =
-      await razorpayResponse.json();
+    const link = await razorpayResponse.json();
 
     if (!razorpayResponse.ok) {
-      return res
-        .status(502)
-        .json({
-          error:
-            "Could not verify Payment Link"
-        });
+      return res.status(502).json({
+        error: "Could not verify Payment Link"
+      });
     }
 
     if (
       link.status !== "paid" ||
-      link.reference_id !==
-        info.reference_id ||
+      link.reference_id !== info.reference_id ||
       link.amount_paid < link.amount
     ) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "Payment is not verified"
-        });
+      return res.status(400).json({
+        error: "Payment is not verified"
+      });
     }
 
-    const notes =
-      link.notes || {};
+    const notes = link.notes || {};
 
-    const encrypted =
-      Object.keys(notes)
-        .filter(
-          key =>
-            /^skkgn_\d+$/.test(key)
-        )
-        .sort()
-        .map(
-          key => notes[key]
-        )
-        .join("");
+    const encrypted = Object.keys(notes)
+      .filter(key => /^skkgn_\d+$/.test(key))
+      .sort((a, b) => {
+        return Number(a.split("_")[1]) -
+               Number(b.split("_")[1]);
+      })
+      .map(key => notes[key])
+      .join("");
 
-    const complaint =
-      JSON.parse(
-        decrypt(
-          encrypted,
-          encryptionSecret
-        )
-      );
-
-    return res
-      .status(200)
-      .json({
-
-        ok: true,
-
-        paymentStatus:
-          "Completed",
-
-        razorpayPaymentId:
-          info.payment_id,
-
-        paymentLinkId:
-          info.link_id,
-
-        referenceId:
-          info.reference_id,
-
-        complaint
-
+    if (!encrypted) {
+      return res.status(400).json({
+        error: "Complaint data not found"
       });
+    }
+
+    const complaint = JSON.parse(
+      decrypt(encrypted, encryptionSecret)
+    );
+
+    return res.status(200).json({
+      ok: true,
+      paymentStatus: "Completed",
+      razorpayPaymentId: info.payment_id,
+      paymentLinkId: info.link_id,
+      referenceId: info.reference_id,
+      complaint
+    });
 
   } catch (e) {
+    console.error("Payment verification error:", e);
 
-    console.error(e);
-
-    return res
-      .status(500)
-      .json({
-        error:
-          "Verification failed"
-      });
-
+    return res.status(500).json({
+      error: "Verification failed"
+    });
   }
-
 };
