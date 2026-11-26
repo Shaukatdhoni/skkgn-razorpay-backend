@@ -20,15 +20,17 @@ function safeEqual(a, b) {
 }
 
 module.exports = async (req, res) => {
-
   if (req.method !== "GET") {
-    return res
-      .status(405)
-      .send("Method not allowed");
+    return res.status(405).send("Method not allowed");
   }
 
-  try {
+  const isStore = req.query.returnTo === "store";
 
+  const returnPage = isStore
+    ? "https://skkgnteam.in/store.html"
+    : "https://skkgnteam.in/";
+
+  try {
     const {
       razorpay_payment_id,
       razorpay_payment_link_id,
@@ -44,29 +46,24 @@ module.exports = async (req, res) => {
       !razorpay_payment_link_status ||
       !razorpay_signature
     ) {
-      return res
-        .status(400)
-        .send("Missing Razorpay callback parameters");
-    }
-
-    if (
-      razorpay_payment_link_status !== "paid"
-    ) {
-      return res.redirect(
-        "https://skkgnteam.in/?payment=failed"
+      return res.status(400).send(
+        "Missing Razorpay callback parameters"
       );
     }
 
-    const secret =
-      process.env.RAZORPAY_KEY_SECRET;
+    if (razorpay_payment_link_status !== "paid") {
+      return res.redirect(
+        returnPage + "?payment=failed"
+      );
+    }
 
-    const tokenSecret =
-      process.env.CALLBACK_TOKEN_SECRET;
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    const tokenSecret = process.env.CALLBACK_TOKEN_SECRET;
 
     if (!secret || !tokenSecret) {
-      return res
-        .status(500)
-        .send("Server secrets are missing");
+      return res.status(500).send(
+        "Server secrets are missing"
+      );
     }
 
     const signedValue = [
@@ -76,67 +73,35 @@ module.exports = async (req, res) => {
       razorpay_payment_id
     ].join("|");
 
-    const expectedSignature =
-      sign(
-        signedValue,
-        secret
-      );
+    const expectedSignature = sign(signedValue, secret);
 
-    if (
-      !safeEqual(
-        expectedSignature,
-        razorpay_signature
-      )
-    ) {
-      return res
-        .status(400)
-        .send("Invalid Razorpay signature");
+    if (!safeEqual(expectedSignature, razorpay_signature)) {
+      return res.status(400).send("Invalid Razorpay signature");
     }
 
-    const payload =
-      Buffer
-        .from(
-          JSON.stringify({
-            payment_id:
-              razorpay_payment_id,
+    const payload = Buffer.from(
+      JSON.stringify({
+        payment_id: razorpay_payment_id,
+        link_id: razorpay_payment_link_id,
+        reference_id: razorpay_payment_link_reference_id,
+        exp: Date.now() + 10 * 60 * 1000
+      })
+    ).toString("base64url");
 
-            link_id:
-              razorpay_payment_link_id,
-
-            reference_id:
-              razorpay_payment_link_reference_id,
-
-            exp:
-              Date.now() +
-              10 * 60 * 1000
-          })
-        )
-        .toString("base64url");
-
-    const tokenSignature =
-      sign(
-        payload,
-        tokenSecret
-      );
-
-    const token =
-      payload +
-      "." +
-      tokenSignature;
+    const tokenSignature = sign(payload, tokenSecret);
+    const token = payload + "." + tokenSignature;
 
     return res.redirect(
-      "https://skkgnteam.in/?payment=verified&token=" +
+      returnPage +
+      "?payment=verified&token=" +
       encodeURIComponent(token)
     );
 
-  } catch (e) {
+  } catch (error) {
+    console.error("Payment callback error:", error);
 
-    console.error(e);
-
-    return res
-      .status(500)
-      .send("Payment verification error");
-
+    return res.status(500).send(
+      "Payment verification error"
+    );
   }
-
 };
