@@ -1,3 +1,4 @@
+
 const crypto = require("crypto");
 
 const PLANS = {
@@ -20,7 +21,7 @@ const PLANS = {
   }
 };
 
-
+// CORS CONFIGURATION
 function setCors(req, res) {
   const allowedOrigins = [
     "https://skkgnteam.in",
@@ -33,14 +34,21 @@ function setCors(req, res) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
 
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "POST, OPTIONS"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type"
+  );
+
   res.setHeader("Vary", "Origin");
 }
 
-
+// ENCRYPT COMPLAINT DATA
 function encrypt(text, secret) {
-
   const key = crypto
     .createHash("sha256")
     .update(secret)
@@ -54,7 +62,7 @@ function encrypt(text, secret) {
     iv
   );
 
-  const enc = Buffer.concat([
+  const encrypted = Buffer.concat([
     cipher.update(text, "utf8"),
     cipher.final()
   ]);
@@ -62,14 +70,14 @@ function encrypt(text, secret) {
   return [
     iv.toString("base64url"),
     cipher.getAuthTag().toString("base64url"),
-    enc.toString("base64url")
+    encrypted.toString("base64url")
   ].join(".");
 }
 
 module.exports = async (req, res) => {
-
   setCors(req, res);
 
+  // Handle browser preflight request
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
@@ -81,79 +89,117 @@ module.exports = async (req, res) => {
   }
 
   try {
-
     const {
-  plan,
-  name,
-  mobile,
-  subject,
-  details,
-  returnTo
-} = req.body || {};
+      plan,
+      name,
+      mobile,
+      subject,
+      details,
+      returnTo
+    } = req.body || {};
 
-    const p = PLANS[plan];
+    // Validate selected plan
+    const selectedPlan = PLANS[plan];
 
-    if (!p) {
+    if (!selectedPlan) {
       return res.status(400).json({
-        error: "Invalid plan"
+        error: "Invalid plan selected"
       });
     }
 
-    if (!name || !mobile || !subject || !details) {
+    // Validate complaint details
+    if (
+      !name ||
+      !mobile ||
+      !subject ||
+      !details
+    ) {
       return res.status(400).json({
-        error: "Missing complaint details"
+        error: "Required complaint details are missing"
       });
     }
 
-    const keyId =
-      process.env.RAZORPAY_KEY_ID;
+    const cleanName = String(name).trim();
+    const cleanMobile = String(mobile).trim();
+    const cleanSubject = String(subject).trim();
+    const cleanDetails = String(details).trim();
 
-    const keySecret =
-      process.env.RAZORPAY_KEY_SECRET;
+    if (
+      !cleanName ||
+      !cleanMobile ||
+      !cleanSubject ||
+      !cleanDetails
+    ) {
+      return res.status(400).json({
+        error: "Complaint details cannot be empty"
+      });
+    }
 
-    const encSecret =
+    if (cleanDetails.length > 1500) {
+      return res.status(400).json({
+        error: "Complaint description is too long"
+      });
+    }
+
+    // Backend environment variables
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    const encryptionSecret =
       process.env.COMPLAINT_ENCRYPTION_SECRET;
 
-    if (!keyId || !keySecret || !encSecret) {
+    if (
+      !keyId ||
+      !keySecret ||
+      !encryptionSecret
+    ) {
       return res.status(500).json({
         error: "Server environment variables are missing"
       });
     }
 
+    // Generate unique reference ID
     const referenceId =
       "SKKGN" +
       Date.now().toString(36).toUpperCase() +
       crypto.randomBytes(3).toString("hex").toUpperCase();
 
+    // Encrypt complaint information
     const encrypted = encrypt(
       JSON.stringify({
-        name: String(name),
-        mobile: String(mobile),
-        subject: String(subject),
-        details: String(details),
+        name: cleanName,
+        mobile: cleanMobile,
+        subject: cleanSubject,
+        details: cleanDetails,
         plan: String(plan)
       }),
-      encSecret
+      encryptionSecret
     );
 
-    const chunks =
-      encrypted.match(/.{1,240}/g) || [];
+    // Split encrypted data into Razorpay notes
+    const chunks = encrypted.match(/.{1,240}/g) || [];
+
+    // Razorpay notes support a maximum of 15 entries
+    if (chunks.length > 15) {
+      return res.status(400).json({
+        error: "Complaint data is too large"
+      });
+    }
 
     const notes = {};
 
-    chunks.slice(0, 15).forEach((value, index) => {
+    chunks.forEach((value, index) => {
       notes[
-        "skkgn_" +
-        String(index + 1).padStart(2, "0")
+        "skkgn_" + String(index + 1).padStart(2, "0")
       ] = value;
     });
 
-    const auth =
-      Buffer
-        .from(`${keyId}:${keySecret}`)
-        .toString("base64");
+    // Razorpay authentication
+    const auth = Buffer
+      .from(`${keyId}:${keySecret}`)
+      .toString("base64");
 
-    const r = await fetch(
+    // Create Razorpay Payment Link
+    const razorpayResponse = await fetch(
       "https://api.razorpay.com/v1/payment_links",
       {
         method: "POST",
@@ -164,23 +210,23 @@ module.exports = async (req, res) => {
         },
 
         body: JSON.stringify({
-          amount: p.amount,
+          amount: selectedPlan.amount,
           currency: "INR",
           accept_partial: false,
           reference_id: referenceId,
-          description: p.description,
+          description: selectedPlan.description,
 
           customer: {
-            name: String(name),
-            contact: String(mobile)
+            name: cleanName,
+            contact: cleanMobile
           },
 
           notes: notes,
 
           callback_url:
-  returnTo === "store"
-    ? "https://skkgn-razorpay-backend.vercel.app/api/payment-callback?returnTo=store"
-    : "https://skkgn-razorpay-backend.vercel.app/api/payment-callback",
+            returnTo === "store"
+              ? "https://skkgn-razorpay-backend.vercel.app/api/payment-callback?returnTo=store"
+              : "https://skkgn-razorpay-backend.vercel.app/api/payment-callback",
 
           callback_method: "get",
           reminder_enable: false
@@ -188,13 +234,24 @@ module.exports = async (req, res) => {
       }
     );
 
-    const data = await r.json();
+    const data = await razorpayResponse.json();
 
-    if (!r.ok) {
-      return res.status(r.status).json({
+    if (!razorpayResponse.ok) {
+      console.error(
+        "Razorpay API Error:",
+        data
+      );
+
+      return res.status(razorpayResponse.status).json({
         error:
           data.error?.description ||
           "Razorpay Payment Link creation failed"
+      });
+    }
+
+    if (!data.short_url || !data.id) {
+      return res.status(502).json({
+        error: "Invalid response from Razorpay"
       });
     }
 
@@ -205,13 +262,14 @@ module.exports = async (req, res) => {
       referenceId: referenceId
     });
 
-  } catch (e) {
-
-    console.error(e);
+  } catch (error) {
+    console.error(
+      "Create Payment Link Error:",
+      error
+    );
 
     return res.status(500).json({
-      error: "Server error"
+      error: "Internal server error"
     });
-
   }
 };
